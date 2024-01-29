@@ -10,14 +10,14 @@ use uuid::Uuid;
 
 // TODO: Implement serde serializer
 #[derive(PartialEq, Eq, Debug)]
-pub(crate) enum TaskStatus {
+pub enum TaskStatus {
     WaitingToStart,
     WaitingToComplete,
     Completed,
 }
 
 impl TaskStatus {
-    pub(crate) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         match self {
             TaskStatus::WaitingToStart => "waiting_to_start",
             TaskStatus::WaitingToComplete => "waiting_to_complete",
@@ -34,7 +34,7 @@ impl TaskStatus {
         completed_at: Option<OffsetDateTime>,
         now: OffsetDateTime,
     ) -> Self {
-        if let Some(_) = completed_at {
+        if completed_at.is_some() {
             Self::Completed
         } else if start_at < now {
             Self::WaitingToStart
@@ -85,29 +85,34 @@ mod tests {
     }
 }
 
-pub(crate) struct Task {
-    pub(crate) id: Uuid,
-    pub(crate) created_at: OffsetDateTime,
-    pub(crate) task_type: String,
-    pub(crate) status: TaskStatus,
-    pub(crate) start_at: OffsetDateTime,
-    pub(crate) completed_at: Option<OffsetDateTime>,
+pub struct Task {
+    pub id: Uuid,
+    pub created_at: OffsetDateTime,
+    pub task_type: String,
+    pub status: TaskStatus,
+    pub start_at: OffsetDateTime,
+    pub completed_at: Option<OffsetDateTime>,
+}
+
+pub struct WorkerTask {
+    pub id: Uuid,
+    pub task_type: String,
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum RepositoryError {
+pub enum RepositoryError {
     #[error("sqlx error")]
     SqlxError(#[from] sqlx::Error),
 }
 
 // Since Repository is used by AppState, this must be cheap to clone.
 #[derive(Clone)]
-pub(crate) struct Repository {
+pub struct Repository {
     pool: PgPool,
 }
 
 impl Repository {
-    pub(crate) async fn new(database_url: String) -> Self {
+    pub async fn new(database_url: String) -> Self {
         let pool = PgPoolOptions::new()
             .max_connections(5)
             .acquire_timeout(Duration::from_secs(3))
@@ -118,13 +123,13 @@ impl Repository {
         Self { pool }
     }
 
-    pub(crate) async fn new_from_env() -> Self {
+    pub async fn new_from_env() -> Self {
         let database_url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgres://postgres:example@localhost".to_string());
         Self::new(database_url).await
     }
 
-    pub(crate) async fn create_task(
+    pub async fn create_task(
         &self,
         task_type: &str,
         start_at: time::OffsetDateTime,
@@ -142,7 +147,7 @@ impl Repository {
         Ok(task_insert_record.id)
     }
 
-    pub(crate) async fn show_task(&self, id: &Uuid) -> Result<Option<Task>, RepositoryError> {
+    pub async fn show_task(&self, id: &Uuid) -> Result<Option<Task>, RepositoryError> {
         let record = sqlx::query!(
             "SELECT id, created_at, type as task_type, start_at, completed_at FROM tasks WHERE id = $1",
             id
@@ -165,5 +170,46 @@ impl Repository {
         } else {
             Ok(None)
         }
+    }
+
+    pub async fn next_worker_task(&self) -> Result<Option<WorkerTask>, RepositoryError> {
+        let mut tx = self.pool.begin().await?;
+        let record_to_lock = sqlx::query!(
+            "SELECT id, type as task_type FROM tasks
+                WHERE id = (SELECT id FROM tasks
+                    WHERE start_at < now()
+                    AND completed_at IS NULL
+                    AND worker_assigned_at IS NULL
+                    LIMIT 1)
+                AND start_at < now()
+                AND completed_at IS NULL
+                AND worker_assigned_at IS NULL
+            FOR UPDATE"
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+        let result = if let Some(record_to_lock) = record_to_lock {
+            sqlx::query!(
+                "UPDATE tasks SET worker_assigned_at = now() WHERE id = $1",
+                record_to_lock.id
+            )
+            .execute(&mut *tx)
+            .await?;
+            Ok(Some(WorkerTask {
+                id: record_to_lock.id,
+                task_type: record_to_lock.task_type,
+            }))
+        } else {
+            Ok(None)
+        };
+        tx.commit().await?;
+        result
+    }
+
+    pub async fn complete_task(&self, id: Uuid) -> Result<(), RepositoryError> {
+        sqlx::query!("UPDATE tasks SET completed_at = now() WHERE id = $1", id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 }

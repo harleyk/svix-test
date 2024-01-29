@@ -13,8 +13,7 @@ use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-mod repository;
-use repository::Repository;
+use svix_test::repository::Repository;
 use uuid::Uuid;
 
 // AppState must be cheap to clone, usually by using an Arc on the field.
@@ -26,7 +25,7 @@ struct AppState {
 #[derive(thiserror::Error, Debug)]
 enum AppError {
     #[error("repository error")]
-    RepositoryError(#[from] repository::RepositoryError),
+    RepositoryError(#[from] svix_test::repository::RepositoryError),
     #[error("json rejection")]
     JsonRejection(#[from] JsonRejection),
     #[error("validation rejection")]

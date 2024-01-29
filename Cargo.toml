@@ -5,6 +5,13 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[[bin]]
+name = "service"
+path = "src/main.rs"
+
+[[bin]]
+name = "worker"
+
 [dependencies]
 thiserror = "1.0.56"
 time = { version = "0.3.31", features = ["serde"] }
