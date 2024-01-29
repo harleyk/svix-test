@@ -39,7 +39,7 @@ impl Repository {
 
     pub(crate) async fn create_task(
         &self,
-        task_type: String,
+        task_type: &str,
         start_at: time::OffsetDateTime,
     ) -> Result<Uuid, RepositoryError> {
         // TODO: Find a better way to ensure that only UTC timestamps get used.
