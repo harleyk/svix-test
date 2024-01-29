@@ -4,8 +4,10 @@ use svix_test::repository::Repository;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-async fn foo() -> bool {
-    false
+async fn foo(task_id: String) -> bool {
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    println!("Foo {task_id}");
+    true
 }
 
 async fn bar() -> bool {
@@ -38,9 +40,10 @@ async fn main() {
         if let Some(task_to_run) = next_worker_task {
             let repository = repository.clone();
             tokio::task::spawn(async move {
+                let task_id = task_to_run.id.simple().to_string();
                 tracing::info!(id = task_to_run.id.simple().to_string(), "starting task");
                 let completed = match task_to_run.task_type.as_str() {
-                    "foo" => foo().await,
+                    "foo" => foo(task_id).await,
                     "bar" => bar().await,
                     "baz" => baz().await,
                     _ => false,
