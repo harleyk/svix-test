@@ -1,12 +1,13 @@
 use std::time::Duration;
 
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{FromRequest, State};
+use axum::extract::{FromRequest, Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Router;
 use axum_extra::routing::Resource;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 use tokio::net::TcpListener;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
@@ -14,6 +15,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod repository;
 use repository::Repository;
+use uuid::Uuid;
 
 // AppState must be cheap to clone, usually by using an Arc on the field.
 #[derive(Clone)]
@@ -29,6 +31,8 @@ enum AppError {
     JsonRejection(#[from] JsonRejection),
     #[error("validation rejection")]
     ValidationRejection(String),
+    #[error("not found")]
+    NotFound,
 }
 
 #[derive(FromRequest)]
@@ -54,6 +58,7 @@ impl IntoResponse for AppError {
         let (status, message) = match self {
             AppError::JsonRejection(rejection) => (rejection.status(), rejection.body_text()),
             AppError::ValidationRejection(message) => (StatusCode::BAD_REQUEST, message),
+            AppError::NotFound => (StatusCode::NOT_FOUND, String::from("Can't find task")),
             AppError::RepositoryError(err) => {
                 tracing::error!(%err, "error in repository");
                 (
@@ -76,6 +81,7 @@ struct TasksCreateParams {
 
 #[derive(Serialize, Clone)]
 struct TasksCreateResponse {
+    // TODO: Make this a UUID with some serde option to pick the format
     id: String,
 }
 
@@ -110,6 +116,46 @@ async fn tasks_create(
     }
 }
 
+#[derive(Serialize)]
+struct TasksShowResponse {
+    // TODO: Make this a UUID with some serde option to pick the format
+    id: String,
+    #[serde(with = "time::serde::rfc3339")]
+    created_at: OffsetDateTime,
+    #[serde(rename = "type")]
+    task_type: String,
+    status: String,
+    #[serde(with = "time::serde::rfc3339")]
+    start_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
+    completed_at: Option<OffsetDateTime>,
+}
+#[axum::debug_handler]
+async fn tasks_show(
+    State(state): State<AppState>,
+    // TODO: Parse the UUID here
+    Path(id): Path<String>,
+) -> Result<AppJson<TasksShowResponse>, AppError> {
+    let id = match Uuid::parse_str(&id) {
+        Ok(id) => id,
+        Err(_) => return Err(AppError::NotFound),
+    };
+    let repository = state.repository;
+    let task = repository.show_task(&id).await?;
+    if let Some(task) = task {
+        Ok(AppJson(TasksShowResponse {
+            id: task.id.simple().to_string(),
+            created_at: task.created_at,
+            task_type: task.task_type,
+            status: task.status.as_str().to_owned(),
+            start_at: task.start_at,
+            completed_at: task.completed_at,
+        }))
+    } else {
+        Err(AppError::NotFound)
+    }
+}
+
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
@@ -124,7 +170,9 @@ async fn main() {
     let repository = Repository::new_from_env().await;
     let state = AppState { repository };
 
-    let tasks_resource = Resource::named("tasks").create(tasks_create);
+    let tasks_resource = Resource::named("tasks")
+        .create(tasks_create)
+        .show(tasks_show);
 
     let app = Router::new()
         .merge(tasks_resource)
