@@ -21,7 +21,9 @@ async fn bar() -> bool {
 }
 
 async fn baz() -> bool {
-    false
+    let random = rand::random::<u32>() % (343 + 1);
+    println!("Baz {random}");
+    true
 }
 
 #[tokio::main]
