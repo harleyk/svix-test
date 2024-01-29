@@ -1,0 +1,16 @@
+volumes:
+  db:
+
+services:
+  db:
+    image: postgres
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: example
+    volumes:
+      - type: volume
+        source: db
+        target: /var/lib/postgresql/data
+    ports:
+      - target: 5432
+        published: 5432
