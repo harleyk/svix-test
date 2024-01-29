@@ -11,7 +11,13 @@ async fn foo(task_id: String) -> bool {
 }
 
 async fn bar() -> bool {
-    false
+    // TODO: Better error handling
+    let status = reqwest::get("https://www.whattimeisitrightnow.com/")
+        .await
+        .unwrap()
+        .status();
+    println!("{}", status.as_u16());
+    true
 }
 
 async fn baz() -> bool {
@@ -42,6 +48,9 @@ async fn main() {
             tokio::task::spawn(async move {
                 let task_id = task_to_run.id.simple().to_string();
                 tracing::info!(id = task_to_run.id.simple().to_string(), "starting task");
+                // TODO: This bool return should probably become some sort of
+                // type which can tell the difference between worker will always
+                // fail, worker would like to try again and so on.
                 let completed = match task_to_run.task_type.as_str() {
                     "foo" => foo(task_id).await,
                     "bar" => bar().await,
